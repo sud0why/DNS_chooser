@@ -1,51 +1,53 @@
 # -*- coding: utf-8 -*-
-import sys
-import time
 import os
 import re
+import sys
+import time
+import json
+from pythonping import ping
 import prettytable as pt
-from libping import do_one
-from libtcping import tcp_do_one
-from udp_test import udp_do_one
-
-server_list = ["114.114.114.114", "114.114.115.115","1.2.4.8", "210.2.4.8", "119.29.29.29", "223.5.5.5", "223.6.6.6", "180.76.76.76", "101.226.4.6", "218.30.118.6", "123.125.81.6", "140.207.198.6"]
-port = 53
-type = "udp"
-header = ['ip', 'rtt']
 
 
-def mainloop(data):
-    p = pt.PrettyTable()
-    p.field_names = header
+class Chooser:
+    def __init__(self, config_file="config.json"):
+        with open(config_file, 'r') as load_f:
+            self.config = json.load(load_f)
+        self.server_cn = self.config["server_cn"]
+        self.server_global = self.config["server_global"]
+        self.method = self.config["method"]
+        self.timeout = self.config["timeout"]
+        self.count = self.config["count"]
+        self.result = {}
+        for ip in self.server_cn:
+            self.result[ip] = {}
+        print(self.config)
 
-    for key in data.keys():
-        row_data = [key, data[key]]
-        p.add_row(row_data)
+    def icmp_once(self, ip):
+        time_start = time.time()
+        while True:
+            result = ping(ip, timeout=self.timeout, count=self.count, payload="A" * 32, match=True)
+            if result.success(2) and abs(result.rtt_avg_ms - result.rtt_min_ms) < 5:
+                return result.rtt_avg_ms
+            if time.time() - time_start > 30:
+                if result.rtt_avg_ms < 1000:
+                    return result.rtt_avg_ms
+                else:
+                    return float("inf")
 
-    os.system('clear')
-    sys.stdout.write("{0}".format(p))
-    sys.stdout.flush()
-    sys.stdout.write("\n")
-    time.sleep(10)
+    def check_icmp(self):
+        for ip in self.server_cn:
+            self.result[ip]["icmp"] = self.icmp_once(ip)
+
+    def print_result(self):
+        result_output = sorted(self.result.items(), key=lambda info: info[1]["icmp"])
+        result_table = pt.PrettyTable()
+        result_table.field_names = ["ip", "icmp"]
+        for each_item in result_output:
+            result_table.add_row([each_item[0], each_item[1]['icmp']])
+        print(result_table)
 
 
-# header = ['type', 'ip', 'count', 'avg', 'min', 'max', 'loss']
-
-all_data = {}
-
-
-while True:
-    # for index, server in enumerate(server_list):
-    for server in server_list:
-        if type == "tcp":
-            rtt = tcp_do_one(server, 53)
-        elif type == "udp":
-            rtt = udp_do_one(server, 53)
-        else:
-            rtt = do_one(server, 1, 32)
-
-        if rtt:
-            all_data[server] = rtt
-        else:
-            all_data[server] = float("inf")
-    mainloop(all_data)
+if __name__ == "__main__":
+    chooser = Chooser()
+    chooser.check_icmp()
+    chooser.print_result()
